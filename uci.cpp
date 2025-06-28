@@ -73,45 +73,112 @@ namespace UCI
 
                 pos.set(fen, false, &si, nullptr);
 
-                while (is >> token)
+                if (token == "moves")
                 {
-                    Move m = UCI::to_move(pos, token);
-                    if (m == MOVE_NONE)
-                        break;
+                    while (is >> token)
+                    {
+                        Move m = UCI::to_move(pos, token);
+                        if (m == MOVE_NONE)
+                        {
+                            cout << "info string Invalid move: " << token << endl;
+                            break;
+                        }
 
-                    StateInfo newSi;
-                    pos.do_move(m, newSi);
+                        if (!pos.legal(m))
+                        {
+                            cout << "info string Illegal move: " << token << endl;
+                            break;
+                        }
+
+                        StateInfo newSi;
+                        pos.do_move(m, newSi);
+                    }
                 }
             }
 
             else if (token == "go")
             {
                 Search::Limits limits;
-                limits.depth = DEPTH_MAX;
+                limits.depth = 50;
+                limits.movetime = 0;
 
                 while (is >> token)
                 {
                     if (token == "depth")
                         is >> limits.depth;
                     else if (token == "movetime")
-                        is >> limits.time[WHITE];
+                        is >> limits.movetime;
                     else if (token == "wtime")
+                    {
                         is >> limits.time[WHITE];
+                        if (pos.side_to_move() == WHITE && limits.movetime == 0)
+                            limits.movetime = limits.time[WHITE] / 30;
+                    }
                     else if (token == "btime")
+                    {
                         is >> limits.time[BLACK];
+                        if (pos.side_to_move() == BLACK && limits.movetime == 0)
+                            limits.movetime = limits.time[BLACK] / 30;
+                    }
                     else if (token == "winc")
                         is >> limits.inc[WHITE];
                     else if (token == "binc")
                         is >> limits.inc[BLACK];
                     else if (token == "movestogo")
                         is >> limits.movestogo;
+                    else if (token == "infinite")
+                        limits.movetime = 0;
                 }
+
+                if (limits.movetime == 0 && limits.depth == 50)
+                    limits.depth = 6;
 
                 Search::start(pos, limits);
             }
 
             else if (token == "d")
                 cout << pos << endl;
+
+            else if (token == "moves")
+            {
+                cout << "Legal moves: ";
+                for (const auto& m : MoveList(pos))
+                {
+                    if (pos.legal(m))
+                        cout << move(m, false) << " ";
+                }
+                cout << endl;
+            }
+
+            else if (token == "debug")
+            {
+                cout << "=== POSITION DEBUG ===" << endl;
+                cout << "Side to move: " << (pos.side_to_move() == WHITE ? "WHITE" : "BLACK") << endl;
+                cout << "Game ply: " << pos.game_ply() << endl;
+
+                cout << "Pieces on board:" << endl;
+                for (Square s = SQ_A1; s <= SQ_H8; s = Square(s + 1))
+                {
+                    Piece pc = pos.piece_on(s);
+                    if (pc != NO_PIECE)
+                    {
+                        char file = 'a' + file_of(s);
+                        char rank = '1' + rank_of(s);
+                        char pieces[] = " PNBRQK  pnbrqk";
+                        cout << file << rank << ": " << pieces[pc] << endl;
+                    }
+                }
+
+                cout << "Legal moves count: ";
+                int count = 0;
+                for (const auto& m : MoveList(pos))
+                {
+                    if (pos.legal(m))
+                        count++;
+                }
+                cout << count << endl;
+                cout << "===================" << endl;
+            }
 
         } while (token != "quit" && argc == 1);
     }

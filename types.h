@@ -40,7 +40,9 @@ enum Piece : U8
 {
     NO_PIECE = 0,
     W_PAWN = 1, W_KNIGHT = 2, W_BISHOP = 3, W_ROOK = 4, W_QUEEN = 5, W_KING = 6,
-    B_PAWN = 9, B_KNIGHT = 10, B_BISHOP = 11, B_ROOK = 12, B_QUEEN = 13, B_KING = 14,
+    PIECE_7 = 7,
+    B_PAWN = 8, B_KNIGHT = 9, B_BISHOP = 10, B_ROOK = 11, B_QUEEN = 12, B_KING = 13,
+    PIECE_14 = 14, PIECE_15 = 15,
     PIECE_NB = 16
 };
 

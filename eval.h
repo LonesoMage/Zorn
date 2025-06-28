@@ -7,6 +7,8 @@ class Position;
 
 namespace Eval
 {
+    extern const Value PieceValues[PIECE_TYPE_NB];
+
     Value evaluate(const Position& pos);
     void init();
 }

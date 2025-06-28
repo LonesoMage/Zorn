@@ -99,12 +99,12 @@ public:
     Key key_after(Move m) const;
     Key material_key() const;
     Key pawn_key() const;
+    int game_ply() const;
 
     Value psq_score() const;
     Value non_pawn_material(Color c) const;
     Value non_pawn_material() const;
 
-    int game_ply() const;
     int rule50_count() const;
     bool opposite_bishops() const;
     bool is_chess960() const;
@@ -127,6 +127,8 @@ public:
     void remove_piece(Square s);
     void move_piece(Square from, Square to);
 
+    void do_castling(Color us, Square from, Square& to, Square& rfrom, Square& rto);
+
 private:
     void set_castling_right(Color c, Square rfrom);
     void set_state(StateInfo* si) const;
@@ -135,9 +137,6 @@ private:
     Bitboard slider_blockers(Bitboard sliders, Square s, Bitboard& pinners) const;
     Bitboard attackers_to(Square s) const;
     Bitboard attackers_to(Square s, Bitboard occupied) const;
-
-    template<bool DoMove>
-    void do_castling(Color us, Square from, Square& to, Square& rfrom, Square& rto);
 
     template<PieceType Pt>
     Bitboard attacks_from(Square s) const;
@@ -229,11 +228,6 @@ inline bool Position::gives_check(Move m) const
         || (discovered_check_candidates() & from_sq(m) && !aligned(from_sq(m), to_sq(m), square<KING>(~sideToMove)));
 }
 
-inline Key Position::key() const
-{
-    return st->key;
-}
-
 inline Key Position::pawn_key() const
 {
     return st->pawnKey;
@@ -257,11 +251,6 @@ inline Value Position::non_pawn_material(Color c) const
 inline Value Position::non_pawn_material() const
 {
     return st->npMaterial[WHITE] + st->npMaterial[BLACK];
-}
-
-inline int Position::game_ply() const
-{
-    return gamePly;
 }
 
 inline int Position::rule50_count() const

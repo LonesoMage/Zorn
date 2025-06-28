@@ -147,7 +147,115 @@ const std::string Position::pretty() const
 
 bool Position::legal(Move m) const
 {
-    return pseudo_legal(m);
+    if (!pseudo_legal(m))
+        return false;
+
+    Square from = from_sq(m);
+    Square to = to_sq(m);
+    Piece pc = piece_on(from);
+    Color us = color_of(pc);
+
+    Square kingSquare = SQ_NONE;
+    for (Square s = SQ_A1; s <= SQ_H8; s = Square(s + 1))
+    {
+        if (piece_on(s) == make_piece(us, KING))
+        {
+            kingSquare = s;
+            break;
+        }
+    }
+
+    if (kingSquare == SQ_NONE)
+        return false;
+
+    if (type_of(pc) == KING)
+        kingSquare = to;
+
+    for (Square s = SQ_A1; s <= SQ_H8; s = Square(s + 1))
+    {
+        Piece enemyPc = piece_on(s);
+        if (enemyPc == NO_PIECE || color_of(enemyPc) == us)
+            continue;
+
+        if (s == to && type_of(pc) != KING)
+            continue;
+
+        PieceType enemyPt = type_of(enemyPc);
+
+        if (enemyPt == PAWN)
+        {
+            Color enemyColor = color_of(enemyPc);
+            int delta1 = (enemyColor == WHITE) ? 9 : -9;
+            int delta2 = (enemyColor == WHITE) ? 7 : -7;
+
+            if ((s + delta1 == kingSquare && distance(s, kingSquare) == 1) ||
+                (s + delta2 == kingSquare && distance(s, kingSquare) == 1))
+                return false;
+        }
+        else if (enemyPt == KNIGHT)
+        {
+            int knightMoves[] = { -17, -15, -10, -6, 6, 10, 15, 17 };
+            for (int delta : knightMoves)
+            {
+                if (s + delta == kingSquare && distance(s, kingSquare) <= 2)
+                    return false;
+            }
+        }
+        else if (enemyPt == KING)
+        {
+            if (distance(s, kingSquare) == 1)
+                return false;
+        }
+        else if (enemyPt == BISHOP || enemyPt == ROOK || enemyPt == QUEEN)
+        {
+            int directions[8] = { -9, -8, -7, -1, 1, 7, 8, 9 };
+            int start = (enemyPt == ROOK) ? 1 : 0;
+            int end = (enemyPt == ROOK) ? 7 : (enemyPt == BISHOP) ? 4 : 8;
+
+            for (int dir = start; dir < end; dir++)
+            {
+                if (enemyPt == BISHOP && (directions[dir] == -8 || directions[dir] == -1 ||
+                    directions[dir] == 1 || directions[dir] == 8))
+                    continue;
+
+                bool blocked = false;
+                for (int dist = 1; dist < 8; dist++)
+                {
+                    Square target = Square(s + directions[dir] * dist);
+                    if (!is_ok(target) || distance(s, target) > 7)
+                        break;
+
+                    if (target == from && type_of(pc) != KING)
+                    {
+                        blocked = true;
+                        break;
+                    }
+
+                    if (target == to && from != kingSquare)
+                    {
+                        blocked = true;
+                        break;
+                    }
+
+                    if (target == kingSquare)
+                    {
+                        if (!blocked)
+                            return false;
+                        break;
+                    }
+
+                    Piece blockingPc = piece_on(target);
+                    if (blockingPc != NO_PIECE)
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
 }
 
 bool Position::pseudo_legal(const Move m) const
@@ -179,7 +287,7 @@ bool Position::pseudo_legal(const Move m) const
                 return true;
             if (delta == 16 && rank_of(from) == RANK_2 && captured == NO_PIECE)
                 return true;
-            if ((delta == 7 || delta == 9) && captured != NO_PIECE)
+            if ((delta == 7 || delta == 9) && captured != NO_PIECE && distance(from, to) == 1)
                 return true;
         }
         else
@@ -188,7 +296,7 @@ bool Position::pseudo_legal(const Move m) const
                 return true;
             if (delta == -16 && rank_of(from) == RANK_7 && captured == NO_PIECE)
                 return true;
-            if ((delta == -7 || delta == -9) && captured != NO_PIECE)
+            if ((delta == -7 || delta == -9) && captured != NO_PIECE && distance(from, to) == 1)
                 return true;
         }
         return false;
@@ -287,11 +395,12 @@ void Position::do_move(Move m, StateInfo& newSt)
     newSt.previous = st;
     st = &newSt;
     ++gamePly;
-    sideToMove = Color(~sideToMove);
 
     Square from = from_sq(m);
     Square to = to_sq(m);
     Piece pc = piece_on(from);
+
+    st->capturedPiece = NO_PIECE;
 
     if (type_of(m) == NORMAL)
     {
@@ -302,6 +411,11 @@ void Position::do_move(Move m, StateInfo& newSt)
     }
 
     sideToMove = Color(~sideToMove);
+}
+
+void Position::do_move(Move m, StateInfo& newSt, bool givesCheck)
+{
+    do_move(m, newSt);
 }
 
 void Position::undo_move(Move m)
@@ -318,6 +432,10 @@ void Position::undo_move(Move m)
 
     st = st->previous;
     --gamePly;
+}
+
+void Position::do_castling(Color us, Square from, Square& to, Square& rfrom, Square& rto)
+{
 }
 
 void Position::put_piece(Piece pc, Square s)
@@ -488,6 +606,30 @@ void Position::set_check_info(StateInfo* si) const
 Bitboard Position::slider_blockers(Bitboard sliders, Square s, Bitboard& pinners) const
 {
     return 0ULL;
+}
+
+Key Position::key() const
+{
+    Key k = 0;
+
+    for (Square s = SQ_A1; s <= SQ_H8; s = Square(s + 1))
+    {
+        Piece pc = piece_on(s);
+        if (pc != NO_PIECE)
+        {
+            k ^= U64(pc) * U64(s + 1) * 0x9E3779B97F4A7C15ULL;
+        }
+    }
+
+    if (sideToMove == BLACK)
+        k ^= 0x123456789ABCDEFULL;
+
+    return k;
+}
+
+int Position::game_ply() const
+{
+    return gamePly;
 }
 
 std::ostream& operator<<(std::ostream& os, const Position& pos)
