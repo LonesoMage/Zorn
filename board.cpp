@@ -92,7 +92,7 @@ Position& Position::set(const std::string& fenStr, bool isChess960, StateInfo* s
     }
 
     ss >> token;
-    st->epSquare = (token == "-") ? SQ_NONE : Square((token[0] - 'a') + 8 * (token[1] - '1'));
+    st->epSquare = (token == "-") ? SQ_NONE : make_square(File(token[0] - 'a'), Rank(token[1] - '1'));
 
     ss >> st->rule50 >> gamePly;
 
@@ -262,6 +262,7 @@ bool Position::pseudo_legal(const Move m) const
 {
     Square from = from_sq(m);
     Square to = to_sq(m);
+    MoveType mt = type_of(m);
 
     if (!is_ok(from) || !is_ok(to) || from == to)
         return false;
@@ -269,6 +270,31 @@ bool Position::pseudo_legal(const Move m) const
     Piece pc = piece_on(from);
     if (pc == NO_PIECE || color_of(pc) != sideToMove)
         return false;
+
+    if (mt == CASTLING)
+    {
+        if (type_of(pc) != KING)
+            return false;
+
+        bool kingSide = to > from;
+        CastlingRights cr = kingSide ?
+            (sideToMove == WHITE ? WHITE_OO : BLACK_OO) :
+            (sideToMove == WHITE ? WHITE_OOO : BLACK_OOO);
+
+        return can_castle(cr);
+    }
+
+    if (mt == ENPASSANT)
+    {
+        return type_of(pc) == PAWN && to == ep_square();
+    }
+
+    if (mt == PROMOTION)
+    {
+        return type_of(pc) == PAWN &&
+            ((sideToMove == WHITE && rank_of(to) == RANK_8) ||
+                (sideToMove == BLACK && rank_of(to) == RANK_1));
+    }
 
     Piece captured = piece_on(to);
     if (captured != NO_PIECE && color_of(captured) == sideToMove)
@@ -399,23 +425,54 @@ void Position::do_move(Move m, StateInfo& newSt)
     Square from = from_sq(m);
     Square to = to_sq(m);
     Piece pc = piece_on(from);
+    MoveType mt = type_of(m);
 
-    st->capturedPiece = NO_PIECE;
+    st->capturedPiece = piece_on(to);
+    st->epSquare = SQ_NONE;
 
-    if (type_of(m) == NORMAL)
+    if (mt == NORMAL)
     {
-        if (piece_on(to) != NO_PIECE)
-            st->capturedPiece = piece_on(to);
+        move_piece(from, to);
+
+        if (type_of(pc) == PAWN && abs(to - from) == 16)
+        {
+            st->epSquare = Square((from + to) / 2);
+        }
+    }
+    else if (mt == PROMOTION)
+    {
+        remove_piece(from);
+        put_piece(make_piece(color_of(pc), promotion_type(m)), to);
+    }
+    else if (mt == ENPASSANT)
+    {
+        Square capsq = Square(to - (sideToMove == WHITE ? 8 : -8));
+        st->capturedPiece = piece_on(capsq);
 
         move_piece(from, to);
+        remove_piece(capsq);
+    }
+    else if (mt == CASTLING)
+    {
+        Square rfrom, rto;
+        bool kingSide = to > from;
+
+        if (kingSide)
+        {
+            rfrom = sideToMove == WHITE ? SQ_H1 : SQ_H8;
+            rto = sideToMove == WHITE ? SQ_F1 : SQ_F8;
+        }
+        else
+        {
+            rfrom = sideToMove == WHITE ? SQ_A1 : SQ_A8;
+            rto = sideToMove == WHITE ? SQ_D1 : SQ_D8;
+        }
+
+        move_piece(from, to);
+        move_piece(rfrom, rto);
     }
 
     sideToMove = Color(~sideToMove);
-}
-
-void Position::do_move(Move m, StateInfo& newSt, bool givesCheck)
-{
-    do_move(m, newSt);
 }
 
 void Position::undo_move(Move m)
@@ -424,18 +481,54 @@ void Position::undo_move(Move m)
 
     Square from = from_sq(m);
     Square to = to_sq(m);
+    MoveType mt = type_of(m);
 
-    move_piece(to, from);
+    if (mt == NORMAL)
+    {
+        move_piece(to, from);
+    }
+    else if (mt == PROMOTION)
+    {
+        remove_piece(to);
+        put_piece(make_piece(sideToMove, PAWN), from);
+    }
+    else if (mt == ENPASSANT)
+    {
+        Square capsq = Square(to - (sideToMove == WHITE ? 8 : -8));
 
-    if (st->capturedPiece != NO_PIECE)
+        move_piece(to, from);
+        put_piece(st->capturedPiece, capsq);
+    }
+    else if (mt == CASTLING)
+    {
+        Square rfrom, rto;
+        bool kingSide = to > from;
+
+        if (kingSide)
+        {
+            rfrom = sideToMove == WHITE ? SQ_H1 : SQ_H8;
+            rto = sideToMove == WHITE ? SQ_F1 : SQ_F8;
+        }
+        else
+        {
+            rfrom = sideToMove == WHITE ? SQ_A1 : SQ_A8;
+            rto = sideToMove == WHITE ? SQ_D1 : SQ_D8;
+        }
+
+        move_piece(to, from);
+        move_piece(rto, rfrom);
+    }
+
+    if (st->capturedPiece != NO_PIECE && mt != ENPASSANT)
         put_piece(st->capturedPiece, to);
 
     st = st->previous;
     --gamePly;
 }
 
-void Position::do_castling(Color us, Square from, Square& to, Square& rfrom, Square& rto)
+void Position::do_move(Move m, StateInfo& newSt, bool givesCheck)
 {
+    do_move(m, newSt);
 }
 
 void Position::put_piece(Piece pc, Square s)
