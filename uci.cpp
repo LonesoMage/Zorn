@@ -142,11 +142,39 @@ namespace UCI
             else if (token == "moves")
             {
                 cout << "Legal moves: ";
+                MoveList moveList(pos);
+                int count = 0;
+
+                for (const auto& m : moveList)
+                {
+                    count++;
+                    cout << move_to_uci(m) << " ";
+                }
+
+                if (count == 0)
+                    cout << "none";
+                cout << endl;
+            }
+
+            else if (token == "enpassant")
+            {
+                cout << "En passant square: ";
+                if (pos.ep_square() == SQ_NONE)
+                    cout << "none" << endl;
+                else
+                    cout << UCI::square(pos.ep_square()) << endl;
+
+                cout << "Available en passant captures: ";
+                bool found = false;
                 for (const auto& m : MoveList(pos))
                 {
-                    if (pos.legal(m))
-                        cout << move(m, false) << " ";
+                    if (pos.legal(m) && type_of(m) == ENPASSANT)
+                    {
+                        cout << move_to_uci(m) << " ";
+                        found = true;
+                    }
                 }
+                if (!found) cout << "none";
                 cout << endl;
             }
 
@@ -169,14 +197,15 @@ namespace UCI
                     }
                 }
 
-                cout << "Legal moves count: ";
-                int count = 0;
-                for (const auto& m : MoveList(pos))
+                cout << "Move generation test:" << endl;
+                ExtMove moves[256];
+                ExtMove* end = generate<LEGAL>(pos, moves);
+                cout << "Generated moves: " << (end - moves) << endl;
+                for (ExtMove* it = moves; it != end; ++it)
                 {
-                    if (pos.legal(m))
-                        count++;
+                    cout << move_to_uci(it->move) << " ";
                 }
-                cout << count << endl;
+                cout << endl;
                 cout << "===================" << endl;
             }
 
@@ -204,21 +233,7 @@ namespace UCI
 
     string move(Move m, bool chess960)
     {
-        Square from = from_sq(m);
-        Square to = to_sq(m);
-
-        if (m == MOVE_NONE)
-            return "(none)";
-
-        if (m == MOVE_NULL)
-            return "0000";
-
-        string move = square(from) + square(to);
-
-        if (type_of(m) == PROMOTION)
-            move += " pnbrqk"[promotion_type(m)];
-
-        return move;
+        return move_to_uci(m);
     }
 
     Move to_move(const Position& pos, string& str)
@@ -227,7 +242,7 @@ namespace UCI
             str[4] = char(tolower(str[4]));
 
         for (const auto& m : MoveList(pos))
-            if (str == move(m, pos.is_chess960()))
+            if (str == move_to_uci(m))
                 return m;
 
         return MOVE_NONE;

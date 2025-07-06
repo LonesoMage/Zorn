@@ -27,7 +27,6 @@ namespace Search
 
     void init();
     void start(Position& pos, const Limits& limits);
-    Value search(Position& pos, Value alpha, Value beta, Depth depth, bool cutNode = true);
 }
 
 class Thread

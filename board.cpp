@@ -42,6 +42,23 @@ Position& Position::set(const std::string& fenStr, bool isChess960, StateInfo* s
         castlingPath[cr] = 0ULL;
     }
 
+    castlingRookSquare[WHITE_OO] = SQ_H1;
+    castlingRookSquare[WHITE_OOO] = SQ_A1;
+    castlingRookSquare[BLACK_OO] = SQ_H8;
+    castlingRookSquare[BLACK_OOO] = SQ_A8;
+
+    castlingPath[WHITE_OO] = square_bb(SQ_F1) | square_bb(SQ_G1);
+    castlingPath[WHITE_OOO] = square_bb(SQ_B1) | square_bb(SQ_C1) | square_bb(SQ_D1);
+    castlingPath[BLACK_OO] = square_bb(SQ_F8) | square_bb(SQ_G8);
+    castlingPath[BLACK_OOO] = square_bb(SQ_B8) | square_bb(SQ_C8) | square_bb(SQ_D8);
+
+    castlingRightsMask[SQ_A1] |= WHITE_OOO;
+    castlingRightsMask[SQ_E1] |= WHITE_CASTLING;
+    castlingRightsMask[SQ_H1] |= WHITE_OO;
+    castlingRightsMask[SQ_A8] |= BLACK_OOO;
+    castlingRightsMask[SQ_E8] |= BLACK_CASTLING;
+    castlingRightsMask[SQ_H8] |= BLACK_OO;
+
     std::istringstream ss(fenStr);
     std::string token;
 
@@ -92,7 +109,7 @@ Position& Position::set(const std::string& fenStr, bool isChess960, StateInfo* s
     }
 
     ss >> token;
-    st->epSquare = (token == "-") ? SQ_NONE : make_square(File(token[0] - 'a'), Rank(token[1] - '1'));
+    st->epSquare = (token == "-") ? SQ_NONE : Square((token[0] - 'a') + 8 * (token[1] - '1'));
 
     ss >> st->rule50 >> gamePly;
 
@@ -154,22 +171,45 @@ bool Position::legal(Move m) const
     Square to = to_sq(m);
     Piece pc = piece_on(from);
     Color us = color_of(pc);
+    Color them = ~us;
 
-    Square kingSquare = SQ_NONE;
-    for (Square s = SQ_A1; s <= SQ_H8; s = Square(s + 1))
+    if (type_of(m) == CASTLING)
     {
-        if (piece_on(s) == make_piece(us, KING))
+        Square kingSquare = from;
+
+        if (attackers_to(kingSquare) & pieces(them))
+            return false;
+
+        Square step = to > from ? Square(from + 1) : Square(from - 1);
+        for (Square s = step; s != to; s = to > from ? Square(s + 1) : Square(s - 1))
         {
-            kingSquare = s;
-            break;
+            if (attackers_to(s) & pieces(them))
+                return false;
         }
+
+        if (attackers_to(to) & pieces(them))
+            return false;
+
+        return true;
     }
 
-    if (kingSquare == SQ_NONE)
-        return false;
-
+    Square kingSquare = square<KING>(us);
     if (type_of(pc) == KING)
         kingSquare = to;
+
+    Bitboard occupied = pieces();
+    occupied ^= square_bb(from);
+    if (piece_on(to) != NO_PIECE && type_of(m) != ENPASSANT)
+        occupied ^= square_bb(to);
+    occupied |= square_bb(to);
+
+    if (type_of(m) == ENPASSANT)
+    {
+        Square capturedSquare = Square(to - (us == WHITE ? 8 : -8));
+        occupied ^= square_bb(capturedSquare);
+    }
+
+    Bitboard enemyAttacks = 0ULL;
 
     for (Square s = SQ_A1; s <= SQ_H8; s = Square(s + 1))
     {
@@ -177,92 +217,41 @@ bool Position::legal(Move m) const
         if (enemyPc == NO_PIECE || color_of(enemyPc) == us)
             continue;
 
-        if (s == to && type_of(pc) != KING)
+        if (s == to && type_of(m) != CASTLING)
             continue;
 
         PieceType enemyPt = type_of(enemyPc);
 
         if (enemyPt == PAWN)
         {
-            Color enemyColor = color_of(enemyPc);
-            int delta1 = (enemyColor == WHITE) ? 9 : -9;
-            int delta2 = (enemyColor == WHITE) ? 7 : -7;
-
-            if ((s + delta1 == kingSquare && distance(s, kingSquare) == 1) ||
-                (s + delta2 == kingSquare && distance(s, kingSquare) == 1))
-                return false;
+            enemyAttacks |= pawn_attacks_bb(them, s);
         }
         else if (enemyPt == KNIGHT)
         {
-            int knightMoves[] = { -17, -15, -10, -6, 6, 10, 15, 17 };
-            for (int delta : knightMoves)
-            {
-                if (s + delta == kingSquare && distance(s, kingSquare) <= 2)
-                    return false;
-            }
+            enemyAttacks |= knight_attacks_bb(s);
         }
         else if (enemyPt == KING)
         {
-            if (distance(s, kingSquare) == 1)
-                return false;
+            enemyAttacks |= king_attacks_bb(s);
         }
-        else if (enemyPt == BISHOP || enemyPt == ROOK || enemyPt == QUEEN)
+        else if (enemyPt == ROOK || enemyPt == QUEEN)
         {
-            int directions[8] = { -9, -8, -7, -1, 1, 7, 8, 9 };
-            int start = (enemyPt == ROOK) ? 1 : 0;
-            int end = (enemyPt == ROOK) ? 7 : (enemyPt == BISHOP) ? 4 : 8;
+            enemyAttacks |= rook_attacks_bb(s, occupied);
+        }
 
-            for (int dir = start; dir < end; dir++)
-            {
-                if (enemyPt == BISHOP && (directions[dir] == -8 || directions[dir] == -1 ||
-                    directions[dir] == 1 || directions[dir] == 8))
-                    continue;
-
-                bool blocked = false;
-                for (int dist = 1; dist < 8; dist++)
-                {
-                    Square target = Square(s + directions[dir] * dist);
-                    if (!is_ok(target) || distance(s, target) > 7)
-                        break;
-
-                    if (target == from && type_of(pc) != KING)
-                    {
-                        blocked = true;
-                        break;
-                    }
-
-                    if (target == to && from != kingSquare)
-                    {
-                        blocked = true;
-                        break;
-                    }
-
-                    if (target == kingSquare)
-                    {
-                        if (!blocked)
-                            return false;
-                        break;
-                    }
-
-                    Piece blockingPc = piece_on(target);
-                    if (blockingPc != NO_PIECE)
-                    {
-                        blocked = true;
-                        break;
-                    }
-                }
-            }
+        if (enemyPt == BISHOP || enemyPt == QUEEN)
+        {
+            enemyAttacks |= bishop_attacks_bb(s, occupied);
         }
     }
 
-    return true;
+    return !(enemyAttacks & square_bb(kingSquare));
 }
 
 bool Position::pseudo_legal(const Move m) const
 {
     Square from = from_sq(m);
     Square to = to_sq(m);
-    MoveType mt = type_of(m);
 
     if (!is_ok(from) || !is_ok(to) || from == to)
         return false;
@@ -271,29 +260,15 @@ bool Position::pseudo_legal(const Move m) const
     if (pc == NO_PIECE || color_of(pc) != sideToMove)
         return false;
 
-    if (mt == CASTLING)
+    if (type_of(m) == CASTLING)
     {
         if (type_of(pc) != KING)
             return false;
 
-        bool kingSide = to > from;
-        CastlingRights cr = kingSide ?
-            (sideToMove == WHITE ? WHITE_OO : BLACK_OO) :
-            (sideToMove == WHITE ? WHITE_OOO : BLACK_OOO);
+        CastlingRights cr = to == SQ_G1 ? WHITE_OO : to == SQ_C1 ? WHITE_OOO :
+            to == SQ_G8 ? BLACK_OO : to == SQ_C8 ? BLACK_OOO : NO_CASTLING;
 
-        return can_castle(cr);
-    }
-
-    if (mt == ENPASSANT)
-    {
-        return type_of(pc) == PAWN && to == ep_square();
-    }
-
-    if (mt == PROMOTION)
-    {
-        return type_of(pc) == PAWN &&
-            ((sideToMove == WHITE && rank_of(to) == RANK_8) ||
-                (sideToMove == BLACK && rank_of(to) == RANK_1));
+        return can_castle(cr) && !castling_impeded(cr);
     }
 
     Piece captured = piece_on(to);
@@ -313,8 +288,13 @@ bool Position::pseudo_legal(const Move m) const
                 return true;
             if (delta == 16 && rank_of(from) == RANK_2 && captured == NO_PIECE)
                 return true;
-            if ((delta == 7 || delta == 9) && captured != NO_PIECE && distance(from, to) == 1)
-                return true;
+            if ((delta == 7 || delta == 9) && distance(from, to) == 1)
+            {
+                if (captured != NO_PIECE && color_of(captured) != us)
+                    return true;
+                if (to == ep_square())
+                    return true;
+            }
         }
         else
         {
@@ -322,8 +302,13 @@ bool Position::pseudo_legal(const Move m) const
                 return true;
             if (delta == -16 && rank_of(from) == RANK_7 && captured == NO_PIECE)
                 return true;
-            if ((delta == -7 || delta == -9) && captured != NO_PIECE && distance(from, to) == 1)
-                return true;
+            if ((delta == -7 || delta == -9) && distance(from, to) == 1)
+            {
+                if (captured != NO_PIECE && color_of(captured) != us)
+                    return true;
+                if (to == ep_square())
+                    return true;
+            }
         }
         return false;
     }
@@ -425,54 +410,73 @@ void Position::do_move(Move m, StateInfo& newSt)
     Square from = from_sq(m);
     Square to = to_sq(m);
     Piece pc = piece_on(from);
-    MoveType mt = type_of(m);
 
-    st->capturedPiece = piece_on(to);
+    st->capturedPiece = NO_PIECE;
+    st->castlingRights = st->previous->castlingRights;
     st->epSquare = SQ_NONE;
+    st->rule50 = st->previous->rule50 + 1;
 
-    if (mt == NORMAL)
+    if (type_of(m) == NORMAL)
     {
-        move_piece(from, to);
-
-        if (type_of(pc) == PAWN && abs(to - from) == 16)
+        if (piece_on(to) != NO_PIECE)
         {
-            st->epSquare = Square((from + to) / 2);
+            st->capturedPiece = piece_on(to);
+            remove_piece(to);
+            st->rule50 = 0;
         }
+
+        if (type_of(pc) == PAWN)
+        {
+            st->rule50 = 0;
+            if (abs(to - from) == 16)
+            {
+                st->epSquare = Square((from + to) / 2);
+            }
+        }
+
+        move_piece(from, to);
     }
-    else if (mt == PROMOTION)
+    else if (type_of(m) == PROMOTION)
     {
+        if (piece_on(to) != NO_PIECE)
+        {
+            st->capturedPiece = piece_on(to);
+            remove_piece(to);
+        }
+
         remove_piece(from);
         put_piece(make_piece(color_of(pc), promotion_type(m)), to);
+        st->rule50 = 0;
     }
-    else if (mt == ENPASSANT)
+    else if (type_of(m) == ENPASSANT)
     {
-        Square capsq = Square(to - (sideToMove == WHITE ? 8 : -8));
-        st->capturedPiece = piece_on(capsq);
+        Square capturedSquare = Square(to - (sideToMove == WHITE ? 8 : -8));
+        st->capturedPiece = piece_on(capturedSquare);
+        remove_piece(capturedSquare);
+        move_piece(from, to);
+        st->rule50 = 0;
+    }
+    else if (type_of(m) == CASTLING)
+    {
+        Square rookFrom = castling_rook_square(to == SQ_G1 ? WHITE_OO :
+            to == SQ_C1 ? WHITE_OOO :
+            to == SQ_G8 ? BLACK_OO : BLACK_OOO);
+        Square rookTo = to == SQ_G1 ? SQ_F1 : to == SQ_C1 ? SQ_D1 :
+            to == SQ_G8 ? SQ_F8 : SQ_D8;
 
         move_piece(from, to);
-        remove_piece(capsq);
+        move_piece(rookFrom, rookTo);
     }
-    else if (mt == CASTLING)
-    {
-        Square rfrom, rto;
-        bool kingSide = to > from;
 
-        if (kingSide)
-        {
-            rfrom = sideToMove == WHITE ? SQ_H1 : SQ_H8;
-            rto = sideToMove == WHITE ? SQ_F1 : SQ_F8;
-        }
-        else
-        {
-            rfrom = sideToMove == WHITE ? SQ_A1 : SQ_A8;
-            rto = sideToMove == WHITE ? SQ_D1 : SQ_D8;
-        }
-
-        move_piece(from, to);
-        move_piece(rfrom, rto);
-    }
+    st->castlingRights &= ~castlingRightsMask[from];
+    st->castlingRights &= ~castlingRightsMask[to];
 
     sideToMove = Color(~sideToMove);
+}
+
+void Position::do_move(Move m, StateInfo& newSt, bool givesCheck)
+{
+    do_move(m, newSt);
 }
 
 void Position::undo_move(Move m)
@@ -481,54 +485,46 @@ void Position::undo_move(Move m)
 
     Square from = from_sq(m);
     Square to = to_sq(m);
-    MoveType mt = type_of(m);
 
-    if (mt == NORMAL)
+    if (type_of(m) == NORMAL)
     {
         move_piece(to, from);
+
+        if (st->capturedPiece != NO_PIECE)
+            put_piece(st->capturedPiece, to);
     }
-    else if (mt == PROMOTION)
+    else if (type_of(m) == PROMOTION)
     {
         remove_piece(to);
         put_piece(make_piece(sideToMove, PAWN), from);
+
+        if (st->capturedPiece != NO_PIECE)
+            put_piece(st->capturedPiece, to);
     }
-    else if (mt == ENPASSANT)
+    else if (type_of(m) == ENPASSANT)
     {
-        Square capsq = Square(to - (sideToMove == WHITE ? 8 : -8));
+        move_piece(to, from);
+        Square capturedSquare = Square(to - (sideToMove == WHITE ? 8 : -8));
+        put_piece(st->capturedPiece, capturedSquare);
+    }
+    else if (type_of(m) == CASTLING)
+    {
+        Square rookFrom = castling_rook_square(to == SQ_G1 ? WHITE_OO :
+            to == SQ_C1 ? WHITE_OOO :
+            to == SQ_G8 ? BLACK_OO : BLACK_OOO);
+        Square rookTo = to == SQ_G1 ? SQ_F1 : to == SQ_C1 ? SQ_D1 :
+            to == SQ_G8 ? SQ_F8 : SQ_D8;
 
         move_piece(to, from);
-        put_piece(st->capturedPiece, capsq);
+        move_piece(rookTo, rookFrom);
     }
-    else if (mt == CASTLING)
-    {
-        Square rfrom, rto;
-        bool kingSide = to > from;
-
-        if (kingSide)
-        {
-            rfrom = sideToMove == WHITE ? SQ_H1 : SQ_H8;
-            rto = sideToMove == WHITE ? SQ_F1 : SQ_F8;
-        }
-        else
-        {
-            rfrom = sideToMove == WHITE ? SQ_A1 : SQ_A8;
-            rto = sideToMove == WHITE ? SQ_D1 : SQ_D8;
-        }
-
-        move_piece(to, from);
-        move_piece(rto, rfrom);
-    }
-
-    if (st->capturedPiece != NO_PIECE && mt != ENPASSANT)
-        put_piece(st->capturedPiece, to);
 
     st = st->previous;
     --gamePly;
 }
 
-void Position::do_move(Move m, StateInfo& newSt, bool givesCheck)
+void Position::do_castling(Color us, Square from, Square& to, Square& rfrom, Square& rto)
 {
-    do_move(m, newSt);
 }
 
 void Position::put_piece(Piece pc, Square s)
@@ -585,6 +581,26 @@ void Position::move_piece(Square from, Square to)
     put_piece(pc, to);
 }
 
+Bitboard Position::slider_attacks(Bitboard occupied) const
+{
+    Bitboard result = 0ULL;
+
+    for (Square s = SQ_A1; s <= SQ_H8; s = Square(s + 1))
+    {
+        Piece pc = piece_on(s);
+        if (pc == NO_PIECE)
+            continue;
+
+        PieceType pt = type_of(pc);
+        if (pt == ROOK || pt == QUEEN)
+            result |= rook_attacks_bb(s, occupied);
+        if (pt == BISHOP || pt == QUEEN)
+            result |= bishop_attacks_bb(s, occupied);
+    }
+
+    return result;
+}
+
 Bitboard Position::blockers_for_king(Color c) const
 {
     return 0ULL;
@@ -612,7 +628,16 @@ Bitboard Position::attackers_to(Square s) const
 
 Bitboard Position::attackers_to(Square s, Bitboard occupied) const
 {
-    return 0ULL;
+    Bitboard attackers = 0ULL;
+
+    attackers |= pawn_attacks_bb(WHITE, s) & pieces(BLACK, PAWN);
+    attackers |= pawn_attacks_bb(BLACK, s) & pieces(WHITE, PAWN);
+    attackers |= knight_attacks_bb(s) & pieces(KNIGHT);
+    attackers |= rook_attacks_bb(s, occupied) & pieces(ROOK, QUEEN);
+    attackers |= bishop_attacks_bb(s, occupied) & pieces(BISHOP, QUEEN);
+    attackers |= king_attacks_bb(s) & pieces(KING);
+
+    return attackers;
 }
 
 Key Position::key_after(Move m) const

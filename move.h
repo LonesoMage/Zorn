@@ -27,6 +27,9 @@ struct ExtMove
 
 class Position;
 
+template<GenType>
+ExtMove* generate(const Position& pos, ExtMove* moveList);
+
 struct MoveList
 {
 private:
@@ -53,12 +56,6 @@ public:
 
     bool contains(Move move) const;
 };
-
-template<GenType>
-ExtMove* generate(const Position& pos, ExtMove* moveList);
-
-template<>
-ExtMove* generate<LEGAL>(const Position& pos, ExtMove* moveList);
 
 std::string move_to_uci(Move m);
 Move uci_to_move(const Position& pos, std::string& str);

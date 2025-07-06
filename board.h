@@ -129,6 +129,8 @@ public:
 
     void do_castling(Color us, Square from, Square& to, Square& rfrom, Square& rto);
 
+    Bitboard slider_attacks(Bitboard occupied) const;
+
 private:
     void set_castling_right(Color c, Square rfrom);
     void set_state(StateInfo* si) const;

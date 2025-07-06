@@ -2,6 +2,9 @@
 #include "board.h"
 #include <string>
 
+template<>
+ExtMove* generate<LEGAL>(const Position& pos, ExtMove* moveList);
+
 MoveList::MoveList(const Position& pos) : last(moves)
 {
     last = generate<LEGAL>(pos, moves);
@@ -56,17 +59,17 @@ ExtMove* generate<LEGAL>(const Position& pos, ExtMove* moveList)
                     cur->move = make_move(from, to);
                     cur->value = VALUE_ZERO;
                     ++cur;
+                }
 
-                    if ((us == WHITE && rank_of(from) == RANK_2) ||
-                        (us == BLACK && rank_of(from) == RANK_7))
+                if ((us == WHITE && rank_of(from) == RANK_2) ||
+                    (us == BLACK && rank_of(from) == RANK_7))
+                {
+                    to = Square(from + 2 * delta);
+                    if (is_ok(to) && pos.empty(to))
                     {
-                        to = Square(from + 2 * delta);
-                        if (is_ok(to) && pos.empty(to))
-                        {
-                            cur->move = make_move(from, to);
-                            cur->value = VALUE_ZERO;
-                            ++cur;
-                        }
+                        cur->move = make_move(from, to);
+                        cur->value = VALUE_ZERO;
+                        ++cur;
                     }
                 }
             }
@@ -77,7 +80,9 @@ ExtMove* generate<LEGAL>(const Position& pos, ExtMove* moveList)
                 if (is_ok(to) && abs(int(file_of(to)) - int(file_of(from))) == 1)
                 {
                     Piece captured = pos.piece_on(to);
-                    if (captured != NO_PIECE && color_of(captured) != us)
+                    bool isEnPassant = (to == pos.ep_square());
+
+                    if ((captured != NO_PIECE && color_of(captured) != us) || isEnPassant)
                     {
                         if ((us == WHITE && rank_of(to) == RANK_8) || (us == BLACK && rank_of(to) == RANK_1))
                         {
@@ -94,18 +99,18 @@ ExtMove* generate<LEGAL>(const Position& pos, ExtMove* moveList)
                             cur->value = VALUE_ZERO;
                             ++cur;
                         }
+                        else if (isEnPassant)
+                        {
+                            cur->move = make<ENPASSANT>(from, to);
+                            cur->value = VALUE_ZERO;
+                            ++cur;
+                        }
                         else
                         {
                             cur->move = make_move(from, to);
                             cur->value = VALUE_ZERO;
                             ++cur;
                         }
-                    }
-                    else if (to == pos.ep_square())
-                    {
-                        cur->move = make<ENPASSANT>(from, to);
-                        cur->value = VALUE_ZERO;
-                        ++cur;
                     }
                 }
             }
@@ -246,23 +251,32 @@ ExtMove* generate<LEGAL>(const Position& pos, ExtMove* moveList)
                 }
             }
 
-            if (pos.can_castle(us == WHITE ? WHITE_OO : BLACK_OO))
+            if (us == WHITE)
             {
-                Square kto = us == WHITE ? SQ_G1 : SQ_G8;
-                if (pos.empty(Square(from + 1)) && pos.empty(Square(from + 2)))
+                if (pos.can_castle(WHITE_OO) && !pos.castling_impeded(WHITE_OO))
                 {
-                    cur->move = make<CASTLING>(from, kto);
+                    cur->move = make<CASTLING>(SQ_E1, SQ_G1);
+                    cur->value = VALUE_ZERO;
+                    ++cur;
+                }
+                if (pos.can_castle(WHITE_OOO) && !pos.castling_impeded(WHITE_OOO))
+                {
+                    cur->move = make<CASTLING>(SQ_E1, SQ_C1);
                     cur->value = VALUE_ZERO;
                     ++cur;
                 }
             }
-
-            if (pos.can_castle(us == WHITE ? WHITE_OOO : BLACK_OOO))
+            else
             {
-                Square kto = us == WHITE ? SQ_C1 : SQ_C8;
-                if (pos.empty(Square(from - 1)) && pos.empty(Square(from - 2)) && pos.empty(Square(from - 3)))
+                if (pos.can_castle(BLACK_OO) && !pos.castling_impeded(BLACK_OO))
                 {
-                    cur->move = make<CASTLING>(from, kto);
+                    cur->move = make<CASTLING>(SQ_E8, SQ_G8);
+                    cur->value = VALUE_ZERO;
+                    ++cur;
+                }
+                if (pos.can_castle(BLACK_OOO) && !pos.castling_impeded(BLACK_OOO))
+                {
+                    cur->move = make<CASTLING>(SQ_E8, SQ_C8);
                     cur->value = VALUE_ZERO;
                     ++cur;
                 }
@@ -270,7 +284,20 @@ ExtMove* generate<LEGAL>(const Position& pos, ExtMove* moveList)
         }
     }
 
-    return cur;
+    ExtMove* end = cur;
+    for (ExtMove* it = moveList; it != end; )
+    {
+        if (!pos.pseudo_legal(it->move))
+        {
+            *it = *(--end);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    return end;
 }
 
 std::string move_to_uci(Move m)
@@ -291,8 +318,11 @@ std::string move_to_uci(Move m)
 
     if (type_of(m) == PROMOTION)
     {
-        char pieces[] = " nbrq";
-        move += pieces[promotion_type(m) - KNIGHT + 1];
+        PieceType pt = promotion_type(m);
+        if (pt == QUEEN) move += 'q';
+        else if (pt == ROOK) move += 'r';
+        else if (pt == BISHOP) move += 'b';
+        else if (pt == KNIGHT) move += 'n';
     }
 
     return move;
@@ -300,35 +330,12 @@ std::string move_to_uci(Move m)
 
 Move uci_to_move(const Position& pos, std::string& str)
 {
-    if (str.length() < 4)
-        return MOVE_NONE;
-
-    Square from = make_square(File(str[0] - 'a'), Rank(str[1] - '1'));
-    Square to = make_square(File(str[2] - 'a'), Rank(str[3] - '1'));
+    if (str.length() == 5)
+        str[4] = char(tolower(str[4]));
 
     for (const auto& m : MoveList(pos))
-    {
-        if (from_sq(m) == from && to_sq(m) == to)
-        {
-            if (str.length() == 5 && type_of(m) == PROMOTION)
-            {
-                PieceType pt = KNIGHT;
-                switch (tolower(str[4]))
-                {
-                case 'n': pt = KNIGHT; break;
-                case 'b': pt = BISHOP; break;
-                case 'r': pt = ROOK; break;
-                case 'q': pt = QUEEN; break;
-                }
-                if (promotion_type(m) == pt)
-                    return m;
-            }
-            else if (str.length() == 4 && type_of(m) != PROMOTION)
-            {
-                return m;
-            }
-        }
-    }
+        if (str == move_to_uci(m))
+            return m;
 
     return MOVE_NONE;
 }
