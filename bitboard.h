@@ -118,12 +118,22 @@ inline U64 attacks_bb(Piece pc, Square s, U64 occupied)
 
 inline U64 rook_attacks_bb(Square s, U64 occupied)
 {
-    return RookAttacks[s][((occupied & RookMasks[s]) * RookMagics[s]) >> RookShifts[s]];
+    if (!is_ok(s) || !RookAttacks[s]) return 0ULL;
+
+    U64 mask = occupied & RookMasks[s];
+    size_t index = (mask * RookMagics[s]) >> RookShifts[s];
+
+    return RookAttacks[s][index];
 }
 
 inline U64 bishop_attacks_bb(Square s, U64 occupied)
 {
-    return BishopAttacks[s][((occupied & BishopMasks[s]) * BishopMagics[s]) >> BishopShifts[s]];
+    if (!is_ok(s) || !BishopAttacks[s]) return 0ULL;
+
+    U64 mask = occupied & BishopMasks[s];
+    size_t index = (mask * BishopMagics[s]) >> BishopShifts[s];
+
+    return BishopAttacks[s][index];
 }
 
 inline U64 queen_attacks_bb(Square s, U64 occupied)

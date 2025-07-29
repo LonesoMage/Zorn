@@ -2,11 +2,33 @@
 #include "board.h"
 #include "search.h"
 #include "move.h"
+#include "eval.h"
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <chrono>
 
 using namespace std;
+
+static uint64_t perft(Position& pos, int depth)
+{
+    if (depth == 0) return 1;
+
+    uint64_t nodes = 0;
+
+    for (const auto& move : MoveList(pos))
+    {
+        if (pos.legal(move))
+        {
+            StateInfo st;
+            pos.do_move(move, st);
+            nodes += perft(pos, depth - 1);
+            pos.undo_move(move);
+        }
+    }
+
+    return nodes;
+}
 
 namespace UCI
 {
@@ -51,7 +73,8 @@ namespace UCI
 
             else if (token == "ucinewgame")
             {
-                pos.set("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", false, &si, nullptr);
+                StateInfo newSi;
+                pos.set("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", false, &newSi, nullptr);
             }
 
             else if (token == "position")
@@ -71,7 +94,8 @@ namespace UCI
                         fen += token + " ";
                 }
 
-                pos.set(fen, false, &si, nullptr);
+                StateInfo newSi;
+                pos.set(fen, false, &newSi, nullptr);
 
                 if (token == "moves")
                 {
@@ -90,8 +114,8 @@ namespace UCI
                             break;
                         }
 
-                        StateInfo newSi;
-                        pos.do_move(m, newSi);
+                        StateInfo moveSi;
+                        pos.do_move(m, moveSi);
                     }
                 }
             }
@@ -99,7 +123,7 @@ namespace UCI
             else if (token == "go")
             {
                 Search::Limits limits;
-                limits.depth = 50;
+                limits.depth = 8;
                 limits.movetime = 0;
 
                 while (is >> token)
@@ -111,14 +135,10 @@ namespace UCI
                     else if (token == "wtime")
                     {
                         is >> limits.time[WHITE];
-                        if (pos.side_to_move() == WHITE && limits.movetime == 0)
-                            limits.movetime = limits.time[WHITE] / 30;
                     }
                     else if (token == "btime")
                     {
                         is >> limits.time[BLACK];
-                        if (pos.side_to_move() == BLACK && limits.movetime == 0)
-                            limits.movetime = limits.time[BLACK] / 30;
                     }
                     else if (token == "winc")
                         is >> limits.inc[WHITE];
@@ -127,11 +147,25 @@ namespace UCI
                     else if (token == "movestogo")
                         is >> limits.movestogo;
                     else if (token == "infinite")
-                        limits.movetime = 0;
+                        limits.infinite = 1;
+                    else if (token == "nodes")
+                        is >> limits.nodes;
+                    else if (token == "mate")
+                        is >> limits.mate;
                 }
 
-                if (limits.movetime == 0 && limits.depth == 50)
-                    limits.depth = 6;
+                if (limits.movetime == 0 && limits.infinite == 0 && limits.time[pos.side_to_move()] > 0)
+                {
+                    int timeLeft = limits.time[pos.side_to_move()];
+                    int increment = limits.inc[pos.side_to_move()];
+                    int movesToGo = limits.movestogo > 0 ? limits.movestogo : 40;
+
+                    limits.movetime = (timeLeft / movesToGo) + (increment * 4 / 5);
+                    limits.movetime = std::max(10, std::min(limits.movetime, timeLeft / 3));
+
+                    if (timeLeft < 1000)
+                        limits.movetime = std::max(10, increment / 2);
+                }
 
                 Search::start(pos, limits);
             }
@@ -147,8 +181,11 @@ namespace UCI
 
                 for (const auto& m : moveList)
                 {
-                    count++;
-                    cout << move_to_uci(m) << " ";
+                    if (pos.legal(m))
+                    {
+                        count++;
+                        cout << move_to_uci(m) << " ";
+                    }
                 }
 
                 if (count == 0)
@@ -156,57 +193,143 @@ namespace UCI
                 cout << endl;
             }
 
-            else if (token == "enpassant")
+            else if (token == "eval")
             {
-                cout << "En passant square: ";
-                if (pos.ep_square() == SQ_NONE)
-                    cout << "none" << endl;
-                else
-                    cout << UCI::square(pos.ep_square()) << endl;
-
-                cout << "Available en passant captures: ";
-                bool found = false;
-                for (const auto& m : MoveList(pos))
-                {
-                    if (pos.legal(m) && type_of(m) == ENPASSANT)
-                    {
-                        cout << move_to_uci(m) << " ";
-                        found = true;
-                    }
-                }
-                if (!found) cout << "none";
-                cout << endl;
+                Value eval = Eval::evaluate(pos);
+                cout << "Static evaluation: " << eval << " (cp)" << endl;
+                cout << "From " << (pos.side_to_move() == WHITE ? "WHITE" : "BLACK") << " perspective" << endl;
             }
 
-            else if (token == "debug")
+            else if (token == "analyze")
             {
-                cout << "=== POSITION DEBUG ===" << endl;
-                cout << "Side to move: " << (pos.side_to_move() == WHITE ? "WHITE" : "BLACK") << endl;
-                cout << "Game ply: " << pos.game_ply() << endl;
+                cout << "=== MOVE ANALYSIS ===" << endl;
 
-                cout << "Pieces on board:" << endl;
-                for (Square s = SQ_A1; s <= SQ_H8; s = Square(s + 1))
+                string testMoves[] = { "e2e4", "d2d4", "g1f3", "b1c3", "b1a3" };
+
+                for (const string& moveStr : testMoves)
                 {
-                    Piece pc = pos.piece_on(s);
-                    if (pc != NO_PIECE)
+                    string moveCopy = moveStr;
+                    Move m = UCI::to_move(pos, moveCopy);
+
+                    if (m != MOVE_NONE && pos.legal(m))
                     {
-                        char file = 'a' + file_of(s);
-                        char rank = '1' + rank_of(s);
-                        char pieces[] = " PNBRQK  pnbrqk";
-                        cout << file << rank << ": " << pieces[pc] << endl;
+                        StateInfo st;
+                        pos.do_move(m, st);
+                        Value eval = Eval::evaluate(pos);
+                        pos.undo_move(m);
+
+                        cout << moveStr << ": " << eval << " cp" << endl;
+                    }
+                }
+                cout << "=====================" << endl;
+            }
+
+            else if (token == "perft")
+            {
+                int depth = 4;
+                if (is >> depth)
+                {
+                    auto start = chrono::steady_clock::now();
+                    uint64_t nodes = perft(pos, depth);
+                    auto end = chrono::steady_clock::now();
+                    auto elapsed = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+
+                    cout << "Perft " << depth << ": " << nodes << " nodes in " << elapsed << "ms";
+                    if (elapsed > 0)
+                        cout << " (" << (nodes * 1000 / elapsed) << " nps)";
+                    cout << endl;
+                }
+            }
+
+            else if (token == "divide")
+            {
+                int depth = 1;
+                if (is >> depth && depth > 0)
+                {
+                    cout << "Divide " << depth << ":" << endl;
+
+                    uint64_t totalNodes = 0;
+                    for (const auto& move : MoveList(pos))
+                    {
+                        if (pos.legal(move))
+                        {
+                            StateInfo st;
+                            pos.do_move(move, st);
+                            uint64_t nodes = depth == 1 ? 1 : perft(pos, depth - 1);
+                            pos.undo_move(move);
+
+                            cout << move_to_uci(move) << ": " << nodes << endl;
+                            totalNodes += nodes;
+                        }
+                    }
+                    cout << "\nTotal: " << totalNodes << " nodes" << endl;
+                }
+            }
+
+            else if (token == "test")
+            {
+                cout << "Testing move generation:" << endl;
+                int count = 0;
+                for (const auto& move : MoveList(pos))
+                {
+                    if (pos.legal(move))
+                    {
+                        count++;
+                        cout << count << ". " << move_to_uci(move) << endl;
+                        if (count >= 5) break;
+                    }
+                }
+                cout << "Total legal moves: " << count << endl;
+            }
+
+            else if (token == "compare")
+            {
+                cout << "=== COMPARING OPENING MOVES ===" << endl;
+
+                struct MoveEval {
+                    string move;
+                    Value staticEval;
+                    Value searchEval;
+                };
+
+                vector<MoveEval> moveEvals;
+                string testMoves[] = { "e2e4", "d2d4", "g1f3", "b1c3", "b1a3" };
+
+                for (const string& moveStr : testMoves)
+                {
+                    string moveCopy = moveStr;
+                    Move m = UCI::to_move(pos, moveCopy);
+
+                    if (m != MOVE_NONE && pos.legal(m))
+                    {
+                        StateInfo st;
+                        pos.do_move(m, st);
+
+                        Value staticEval = Eval::evaluate(pos);
+
+                        Search::Limits limits;
+                        limits.depth = 6;
+                        limits.movetime = 1000;
+
+                        cout.setstate(ios_base::failbit);
+                        Search::start(pos, limits);
+                        cout.clear();
+
+                        Value searchEval = staticEval;
+
+                        pos.undo_move(m);
+
+                        moveEvals.push_back({ moveStr, staticEval, searchEval });
                     }
                 }
 
-                cout << "Move generation test:" << endl;
-                ExtMove moves[256];
-                ExtMove* end = generate<LEGAL>(pos, moves);
-                cout << "Generated moves: " << (end - moves) << endl;
-                for (ExtMove* it = moves; it != end; ++it)
+                cout << "Move     | Static | Search" << endl;
+                cout << "---------|--------|-------" << endl;
+                for (const auto& me : moveEvals)
                 {
-                    cout << move_to_uci(it->move) << " ";
+                    cout << me.move << "   | " << me.staticEval << "    | " << me.searchEval << endl;
                 }
-                cout << endl;
-                cout << "===================" << endl;
+                cout << "================================" << endl;
             }
 
         } while (token != "quit" && argc == 1);
@@ -242,7 +365,7 @@ namespace UCI
             str[4] = char(tolower(str[4]));
 
         for (const auto& m : MoveList(pos))
-            if (str == move_to_uci(m))
+            if (str == move_to_uci(m) && pos.legal(m))
                 return m;
 
         return MOVE_NONE;

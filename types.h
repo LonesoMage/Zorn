@@ -106,7 +106,7 @@ enum GenType : U8
 typedef U16 Move;
 
 constexpr Move MOVE_NONE = 0;
-constexpr Move MOVE_NULL = U16(65);
+constexpr Move MOVE_NULL = Move(65);
 
 constexpr Value VALUE_ZERO = 0;
 constexpr Value VALUE_DRAW = 0;
@@ -114,7 +114,7 @@ constexpr Value VALUE_MATE = 32000;
 constexpr Value VALUE_INFINITE = 32001;
 constexpr Value VALUE_NONE = 32002;
 
-constexpr Depth MAX_PLY = 128;
+constexpr Depth MAX_PLY = 200;
 constexpr Depth DEPTH_ZERO = 0;
 constexpr Depth DEPTH_MAX = 127;
 

@@ -23,76 +23,60 @@ namespace Search
         int timeLimit = 0;
         bool stopped = false;
         uint64_t nodeCount = 0;
+        uint64_t maxNodes = 20000000;
     };
 
     static SearchInfo searchInfo;
-
     static int history[2][64][64];
-    static Move killerMoves[128][2];
-    static Move counterMoves[64][64];
+    static Move killerMoves[64][2];
     static int reductions[64][64];
-
-    static const Value FutilityMargins[5] = { 0, 200, 300, 500, 900 };
 
     void init()
     {
         Threads = new Thread(0);
         TT.resize(64);
+        memset(history, 0, sizeof(history));
+        memset(killerMoves, 0, sizeof(killerMoves));
 
         for (int depth = 1; depth < 64; ++depth)
             for (int moveCount = 1; moveCount < 64; ++moveCount)
                 reductions[depth][moveCount] = int(0.75 + log(double(depth)) * log(double(moveCount)) / 2.25);
-
-        memset(history, 0, sizeof(history));
-        memset(killerMoves, 0, sizeof(killerMoves));
-        memset(counterMoves, 0, sizeof(counterMoves));
     }
 
-    static inline Value scoreMove(const Position& pos, Move move, Move ttMove, int ply, Move previousMove)
+    static inline Value scoreMove(const Position& pos, Move move, Move ttMove, int ply)
     {
         if (move == ttMove) return 30000;
 
-        Square to = to_sq(move);
         Square from = from_sq(move);
+        Square to = to_sq(move);
+        Piece moved = pos.piece_on(from);
         Piece captured = pos.piece_on(to);
 
         if (type_of(move) == PROMOTION)
         {
             PieceType promoteTo = promotion_type(move);
-            Value promoBonus = promoteTo == QUEEN ? 25000 :
+            Value promoValue = promoteTo == QUEEN ? 25000 :
                 promoteTo == ROOK ? 24000 :
                 promoteTo == BISHOP ? 23000 : 22000;
-
             if (captured != NO_PIECE)
-                promoBonus += Eval::PieceValues[type_of(captured)];
-
-            return promoBonus;
+                promoValue += Eval::PieceValues[type_of(captured)] * 10;
+            return promoValue;
         }
 
-        if (type_of(move) == ENPASSANT)
+        if (captured != NO_PIECE || type_of(move) == ENPASSANT)
         {
-            return 21000;
-        }
-
-        if (captured != NO_PIECE)
-        {
-            Value see = Eval::PieceValues[type_of(captured)] - Eval::PieceValues[type_of(pos.piece_on(from))];
-            return see >= 0 ? 20000 + see : 10000 + see;
+            PieceType capturedType = type_of(move) == ENPASSANT ? PAWN : type_of(captured);
+            Value captureValue = Eval::PieceValues[capturedType] * 10 - Eval::PieceValues[type_of(moved)];
+            return 20000 + captureValue;
         }
 
         if (type_of(move) == CASTLING)
             return 15000;
 
-        if (ply < 128)
+        if (ply < 64)
         {
             if (move == killerMoves[ply][0]) return 9000;
             if (move == killerMoves[ply][1]) return 8000;
-        }
-
-        if (previousMove != MOVE_NONE)
-        {
-            if (move == counterMoves[from_sq(previousMove)][to_sq(previousMove)])
-                return 7000;
         }
 
         return history[pos.side_to_move()][from][to];
@@ -100,35 +84,36 @@ namespace Search
 
     static inline bool timeUp()
     {
-        return searchInfo.timeLimit > 0 &&
-            chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - searchInfo.startTime).count() >= searchInfo.timeLimit;
-    }
-
-    static inline void updateHistory(Color us, Square from, Square to, Depth depth, bool failHigh)
-    {
-        int bonus = failHigh ? depth * depth : -depth * depth / 4;
-        history[us][from][to] += bonus;
-        if (abs(history[us][from][to]) > 16000)
-            history[us][from][to] /= 2;
+        if (searchInfo.nodeCount > searchInfo.maxNodes) return true;
+        if (searchInfo.timeLimit <= 0) return false;
+        return chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - searchInfo.startTime).count() >= searchInfo.timeLimit;
     }
 
     static inline void updateKillers(Move move, int ply)
     {
-        if (ply < 128 && move != killerMoves[ply][0])
+        if (ply < 64 && move != killerMoves[ply][0])
         {
             killerMoves[ply][1] = killerMoves[ply][0];
             killerMoves[ply][0] = move;
         }
     }
 
-    static inline void updateCounters(Move move, Move previousMove)
+    static inline void updateHistory(Color us, Square from, Square to, int depth, bool cutoff)
     {
-        if (previousMove != MOVE_NONE)
-            counterMoves[from_sq(previousMove)][to_sq(previousMove)] = move;
+        int bonus = cutoff ? depth * depth : -depth * depth / 4;
+        history[us][from][to] += bonus;
+
+        if (history[us][from][to] > 16000)
+            history[us][from][to] = 16000;
+        else if (history[us][from][to] < -16000)
+            history[us][from][to] = -16000;
     }
 
     static Value quiesce(Position& pos, Value alpha, Value beta, int ply)
     {
+        if (ply >= 100) return Eval::evaluate(pos);
+        if (timeUp()) return VALUE_ZERO;
+
         ++searchInfo.nodeCount;
 
         Value standPat = Eval::evaluate(pos);
@@ -142,6 +127,8 @@ namespace Search
             Square to = to_sq(move);
             Piece captured = pos.piece_on(to);
             if (captured == NO_PIECE && type_of(move) != ENPASSANT) continue;
+
+            if (!pos.legal(move)) continue;
 
             Square from = from_sq(move);
             if (captured != NO_PIECE)
@@ -162,66 +149,19 @@ namespace Search
         return alpha;
     }
 
-    static Value search(Position& pos, Value alpha, Value beta, Depth depth, int ply, bool cutNode, Move previousMove, Move excludedMove);
-
-    static bool isSingular(Position& pos, Move ttMove, Value ttValue, Depth depth, Value beta)
-    {
-        Value singularBeta = ttValue - depth * 2;
-        Depth singularDepth = depth / 2;
-
-        struct ScoredMove
-        {
-            Move move = MOVE_NONE;
-            Value score = VALUE_ZERO;
-        };
-        ScoredMove moves[256];
-        int moveCount = 0;
-
-        for (const auto& move : MoveList(pos))
-        {
-            if (move != ttMove)
-            {
-                moves[moveCount].move = move;
-                moves[moveCount].score = scoreMove(pos, move, MOVE_NONE, 0, MOVE_NONE);
-                moveCount++;
-            }
-        }
-
-        for (int i = 0; i < moveCount - 1; i++)
-        {
-            for (int j = i + 1; j < moveCount; j++)
-            {
-                if (moves[j].score > moves[i].score)
-                {
-                    ScoredMove temp = moves[i];
-                    moves[i] = moves[j];
-                    moves[j] = temp;
-                }
-            }
-        }
-
-        for (int i = 0; i < moveCount; i++)
-        {
-            Move move = moves[i].move;
-
-            StateInfo st;
-            pos.do_move(move, st);
-            Value score = -search(pos, -singularBeta - 1, -singularBeta, singularDepth, 0, true, MOVE_NONE, move);
-            pos.undo_move(move);
-
-            if (score > singularBeta)
-                return false;
-        }
-
-        return true;
-    }
-
-    static Value search(Position& pos, Value alpha, Value beta, Depth depth, int ply, bool cutNode, Move previousMove, Move excludedMove)
+    static Value search(Position& pos, Value alpha, Value beta, Depth depth, int ply, bool cutNode)
     {
         if (timeUp()) return VALUE_ZERO;
         if (depth <= 0) return quiesce(pos, alpha, beta, ply);
+        if (ply >= 100) return Eval::evaluate(pos);
 
         ++searchInfo.nodeCount;
+
+        if (searchInfo.nodeCount % 200000 == 0)
+        {
+            auto elapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - searchInfo.startTime).count();
+            if (elapsed > 60000) return Eval::evaluate(pos);
+        }
 
         bool isPv = (beta - alpha) > 1;
         bool inCheck = pos.checkers() != 0;
@@ -230,10 +170,7 @@ namespace Search
         TTEntry* tte = TT.probe(pos.key(), found);
         Move ttMove = found ? tte->move() : MOVE_NONE;
 
-        if (excludedMove != MOVE_NONE && ttMove == excludedMove)
-            ttMove = MOVE_NONE;
-
-        if (found && tte->depth() >= depth && !isPv && excludedMove == MOVE_NONE)
+        if (found && tte->depth() >= depth && !isPv)
         {
             Value ttValue = tte->value();
             if (tte->bound() == BOUND_EXACT) return ttValue;
@@ -243,102 +180,90 @@ namespace Search
 
         Value staticEval = inCheck ? VALUE_NONE : Eval::evaluate(pos);
 
-        if (!isPv && !inCheck && depth >= 3 && excludedMove == MOVE_NONE)
+        if (!isPv && !inCheck && depth >= 3)
         {
             int R = 3 + depth / 4;
             StateInfo st;
             pos.do_null_move(st);
-            Value nullValue = -search(pos, -beta, -beta + 1, depth - R - 1, ply + 1, !cutNode, MOVE_NONE, MOVE_NONE);
+            Value nullValue = -search(pos, -beta, -beta + 1, depth - R - 1, ply + 1, !cutNode);
             pos.undo_null_move();
 
             if (nullValue >= beta)
                 return nullValue >= VALUE_MATE - 100 ? beta : nullValue;
         }
 
-        if (!isPv && !inCheck && depth <= 4 && excludedMove == MOVE_NONE)
-        {
-            Value futilityValue = staticEval + FutilityMargins[depth];
-            if (futilityValue <= alpha)
-                return futilityValue;
-        }
-
-        if (!isPv && !inCheck && depth <= 8 && staticEval - 85 * depth >= beta && excludedMove == MOVE_NONE)
+        if (!isPv && !inCheck && depth <= 3 && staticEval - 200 * depth >= beta)
             return staticEval;
-
-        Value bestValue = -VALUE_INFINITE;
-        Move bestMove = MOVE_NONE;
-        Value originalAlpha = alpha;
-        int moveCount = 0;
-        int quietsSearched = 0;
 
         struct ScoredMove
         {
             Move move = MOVE_NONE;
             Value score = VALUE_ZERO;
         };
+
         ScoredMove moves[256];
+        int moveCount = 0;
 
         for (const auto& move : MoveList(pos))
         {
-            if (move != excludedMove)
+            if (pos.legal(move))
             {
                 moves[moveCount].move = move;
-                moves[moveCount].score = scoreMove(pos, move, ttMove, ply, previousMove);
+                moves[moveCount].score = scoreMove(pos, move, ttMove, ply);
                 moveCount++;
             }
         }
 
         if (moveCount == 0)
         {
-            if (excludedMove != MOVE_NONE)
-                return alpha;
-            return inCheck ? VALUE_MATE + ply : VALUE_DRAW;
+            return inCheck ? -VALUE_MATE + ply : VALUE_DRAW;
         }
 
         for (int i = 0; i < moveCount - 1; i++)
         {
+            int bestIdx = i;
             for (int j = i + 1; j < moveCount; j++)
             {
-                if (moves[j].score > moves[i].score)
-                {
-                    ScoredMove temp = moves[i];
-                    moves[i] = moves[j];
-                    moves[j] = temp;
-                }
+                if (moves[j].score > moves[bestIdx].score)
+                    bestIdx = j;
+            }
+            if (bestIdx != i)
+            {
+                ScoredMove temp = moves[i];
+                moves[i] = moves[bestIdx];
+                moves[bestIdx] = temp;
             }
         }
 
+        Value bestValue = -VALUE_INFINITE;
+        Move bestMove = MOVE_NONE;
+        Value originalAlpha = alpha;
+        int movesSearched = 0;
+
         for (int i = 0; i < moveCount; i++)
         {
-            Move move = moves[i].move;
+            if (movesSearched >= 64) break;
 
-            bool isCapture = pos.piece_on(to_sq(move)) != NO_PIECE || type_of(move) == ENPASSANT;
+            Move move = moves[i].move;
+            Square from = from_sq(move);
+            Square to = to_sq(move);
+            bool isCapture = pos.piece_on(to) != NO_PIECE || type_of(move) == ENPASSANT;
             bool isPromotion = type_of(move) == PROMOTION;
             bool isQuiet = !isCapture && !isPromotion;
-            bool isKiller = ply < 128 && (move == killerMoves[ply][0] || move == killerMoves[ply][1]);
+            bool isKiller = ply < 64 && (move == killerMoves[ply][0] || move == killerMoves[ply][1]);
             bool givesCheck = pos.gives_check(move);
 
-            if (!isPv && !inCheck && isQuiet && bestValue > -VALUE_MATE && depth <= 4)
+            if (!isPv && !inCheck && isQuiet && movesSearched >= 8 && depth <= 6)
             {
-                Value futilityValue = staticEval + FutilityMargins[depth] + 150;
-                if (futilityValue <= alpha && !givesCheck)
-                    continue;
+                Value futilityValue = staticEval + 150 + 200 * depth;
+                if (futilityValue <= alpha && !givesCheck) continue;
             }
 
-            if (!isPv && !inCheck && isQuiet && quietsSearched >= depth * depth)
-                continue;
+            if (!isPv && !inCheck && isQuiet && movesSearched >= depth * depth + 6)
+                break;
 
             int extension = 0;
-
-            if (move == ttMove && depth >= 6 && tte->depth() >= depth - 3 && !inCheck &&
-                tte->bound() == BOUND_LOWER && abs(tte->value()) < VALUE_MATE - 100 && excludedMove == MOVE_NONE)
-            {
-                if (isSingular(pos, ttMove, tte->value(), depth, beta))
-                    extension = 1;
-            }
-
-            if (inCheck && depth <= 8)
-                extension = 1;
+            if (inCheck) extension = 1;
 
             StateInfo st;
             pos.do_move(move, st);
@@ -348,40 +273,38 @@ namespace Search
 
             if (i == 0)
             {
-                value = -search(pos, -beta, -alpha, newDepth, ply + 1, false, move, MOVE_NONE);
+                value = -search(pos, -beta, -alpha, newDepth, ply + 1, false);
             }
             else
             {
                 int reduction = 0;
 
-                if (depth >= 3 && i >= 3 && isQuiet && !isKiller && !givesCheck && extension == 0)
+                if (depth >= 3 && i >= 4 && isQuiet && !isKiller && !givesCheck)
                 {
-                    int maxDepth = depth > 63 ? 63 : depth;
-                    int maxMove = i > 63 ? 63 : i;
-                    reduction = reductions[maxDepth][maxMove];
+                    int depthIdx = depth < 64 ? depth : 63;
+                    int moveIdx = i < 64 ? i : 63;
+                    reduction = reductions[depthIdx][moveIdx];
 
                     if (isPv) reduction--;
                     if (cutNode) reduction++;
-                    if (move == ttMove) reduction--;
+                    if (move == ttMove) reduction -= 2;
 
-                    reduction = reduction > 0 ? reduction : 0;
-                    int maxReduction = newDepth - 1;
-                    reduction = reduction < maxReduction ? reduction : maxReduction;
+                    reduction = std::max(0, std::min(reduction, newDepth - 1));
                 }
 
-                value = -search(pos, -alpha - 1, -alpha, newDepth - reduction, ply + 1, true, move, MOVE_NONE);
+                value = -search(pos, -alpha - 1, -alpha, newDepth - reduction, ply + 1, true);
 
                 if (value > alpha && reduction > 0)
-                    value = -search(pos, -alpha - 1, -alpha, newDepth, ply + 1, true, move, MOVE_NONE);
+                    value = -search(pos, -alpha - 1, -alpha, newDepth, ply + 1, true);
 
                 if (value > alpha && value < beta && isPv)
-                    value = -search(pos, -beta, -alpha, newDepth, ply + 1, false, move, MOVE_NONE);
+                    value = -search(pos, -beta, -alpha, newDepth, ply + 1, false);
             }
 
             pos.undo_move(move);
+            movesSearched++;
 
-            if (isQuiet)
-                quietsSearched++;
+            if (timeUp()) return bestValue > -VALUE_INFINITE ? bestValue : VALUE_ZERO;
 
             if (value > bestValue)
             {
@@ -396,9 +319,8 @@ namespace Search
                     {
                         if (isQuiet)
                         {
-                            updateHistory(pos.side_to_move(), from_sq(move), to_sq(move), depth, true);
                             updateKillers(move, ply);
-                            updateCounters(move, previousMove);
+                            updateHistory(pos.side_to_move(), from, to, depth, true);
                         }
                         break;
                     }
@@ -406,65 +328,44 @@ namespace Search
             }
 
             if (isQuiet)
-                updateHistory(pos.side_to_move(), from_sq(move), to_sq(move), depth, false);
+                updateHistory(pos.side_to_move(), from, to, depth, false);
         }
 
-        if (excludedMove == MOVE_NONE)
-        {
-            Bound bound = bestValue >= beta ? BOUND_LOWER :
-                bestValue > originalAlpha ? BOUND_EXACT : BOUND_UPPER;
+        if (bestValue == -VALUE_INFINITE)
+            bestValue = VALUE_DRAW;
 
-            tte->save(pos.key(), bestValue, isPv, bound, depth, bestMove, staticEval);
-        }
+        Bound bound = bestValue >= beta ? BOUND_LOWER :
+            bestValue > originalAlpha ? BOUND_EXACT : BOUND_UPPER;
+
+        tte->save(pos.key(), bestValue, isPv, bound, depth, bestMove, staticEval);
 
         return bestValue;
-    }
-
-    static Value aspirationSearch(Position& pos, Value prevScore, Depth depth)
-    {
-        Value delta = Value(16);
-        Value alpha = std::max(Value(prevScore - delta), Value(-VALUE_INFINITE));
-        Value beta = std::min(Value(prevScore + delta), Value(VALUE_INFINITE));
-
-        int failHighCount = 0;
-        int failLowCount = 0;
-
-        while (true)
-        {
-            Value score = search(pos, alpha, beta, depth, 0, false, MOVE_NONE, MOVE_NONE);
-
-            if (score <= alpha)
-            {
-                beta = (alpha + beta) / 2;
-                alpha = std::max(Value(score - delta), Value(-VALUE_INFINITE));
-                failLowCount++;
-            }
-            else if (score >= beta)
-            {
-                beta = std::min(Value(score + delta), Value(VALUE_INFINITE));
-                failHighCount++;
-            }
-            else
-            {
-                return score;
-            }
-
-            delta += delta / 4 + 5;
-
-            if (failHighCount + failLowCount > 4)
-            {
-                alpha = -VALUE_INFINITE;
-                beta = VALUE_INFINITE;
-            }
-        }
     }
 
     void start(Position& pos, const Limits& limits)
     {
         searchInfo.startTime = chrono::steady_clock::now();
-        searchInfo.timeLimit = limits.movetime;
         searchInfo.stopped = false;
         searchInfo.nodeCount = 0;
+
+        if (limits.movetime > 0)
+        {
+            searchInfo.timeLimit = limits.movetime;
+            searchInfo.maxNodes = 100000000;
+        }
+        else if (limits.time[pos.side_to_move()] > 0)
+        {
+            int timeLeft = limits.time[pos.side_to_move()];
+            searchInfo.timeLimit = timeLeft / 30;
+            searchInfo.maxNodes = 50000000;
+        }
+        else
+        {
+            searchInfo.timeLimit = 60000;
+            searchInfo.maxNodes = 20000000;
+        }
+
+        int maxDepth = limits.depth > 0 ? std::min(limits.depth, 20) : 12;
 
         TT.new_search();
         memset(killerMoves, 0, sizeof(killerMoves));
@@ -472,23 +373,23 @@ namespace Search
         Value bestValue = -VALUE_INFINITE;
         Move bestMove = MOVE_NONE;
 
-        int maxDepth = limits.depth < 50 ? limits.depth : 50;
-        if (limits.movetime > 0) maxDepth = 50;
-
         for (Depth depth = 1; depth <= maxDepth; ++depth)
         {
             if (timeUp()) break;
 
-            if (depth == 1)
-                bestValue = search(pos, -VALUE_INFINITE, VALUE_INFINITE, depth, 0, false, MOVE_NONE, MOVE_NONE);
-            else
-                bestValue = aspirationSearch(pos, bestValue, depth);
+            auto depthStart = chrono::steady_clock::now();
+            bestValue = search(pos, -VALUE_INFINITE, VALUE_INFINITE, depth, 0, false);
+            auto depthEnd = chrono::steady_clock::now();
+
+            if (timeUp()) break;
 
             bool found;
             TTEntry* tte = TT.probe(pos.key(), found);
-            if (found) bestMove = tte->move();
+            if (found && tte->move() != MOVE_NONE)
+                bestMove = tte->move();
 
             auto elapsed = int(chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - searchInfo.startTime).count());
+            auto depthTime = int(chrono::duration_cast<chrono::milliseconds>(depthEnd - depthStart).count());
             Threads->nodes = searchInfo.nodeCount;
 
             cout << "info depth " << depth
@@ -499,12 +400,29 @@ namespace Search
                 << " pv " << UCI::move(bestMove, pos.is_chess960())
                 << endl;
 
-            if (timeUp()) break;
+            if (abs(bestValue) >= VALUE_MATE - 100)
+                break;
+
+            if (depth >= 8 && depthTime > searchInfo.timeLimit / 2)
+                break;
         }
 
         if (bestMove != MOVE_NONE)
             cout << "bestmove " << UCI::move(bestMove, pos.is_chess960()) << endl;
         else
-            cout << "bestmove (none)" << endl;
+        {
+            for (const auto& move : MoveList(pos))
+            {
+                if (pos.legal(move))
+                {
+                    bestMove = move;
+                    break;
+                }
+            }
+            if (bestMove != MOVE_NONE)
+                cout << "bestmove " << UCI::move(bestMove, pos.is_chess960()) << endl;
+            else
+                cout << "bestmove (none)" << endl;
+        }
     }
 }
