@@ -106,7 +106,7 @@ enum GenType : U8
 typedef U16 Move;
 
 constexpr Move MOVE_NONE = 0;
-constexpr Move MOVE_NULL = Move(65);
+constexpr Move MOVE_NULL = U16(65);
 
 constexpr Value VALUE_ZERO = 0;
 constexpr Value VALUE_DRAW = 0;

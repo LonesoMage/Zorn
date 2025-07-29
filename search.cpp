@@ -162,6 +162,8 @@ namespace Search
         return alpha;
     }
 
+    static Value search(Position& pos, Value alpha, Value beta, Depth depth, int ply, bool cutNode, Move previousMove, Move excludedMove);
+
     static bool isSingular(Position& pos, Move ttMove, Value ttValue, Depth depth, Value beta)
     {
         Value singularBeta = ttValue - depth * 2;
@@ -204,7 +206,7 @@ namespace Search
 
             StateInfo st;
             pos.do_move(move, st);
-            Value score = -search(pos, -singularBeta - 1, -singularBeta, singularDepth, 0, true, move);
+            Value score = -search(pos, -singularBeta - 1, -singularBeta, singularDepth, 0, true, MOVE_NONE, move);
             pos.undo_move(move);
 
             if (score > singularBeta)
@@ -214,7 +216,7 @@ namespace Search
         return true;
     }
 
-    static Value search(Position& pos, Value alpha, Value beta, Depth depth, int ply, bool cutNode, Move previousMove = MOVE_NONE, Move excludedMove = MOVE_NONE)
+    static Value search(Position& pos, Value alpha, Value beta, Depth depth, int ply, bool cutNode, Move previousMove, Move excludedMove)
     {
         if (timeUp()) return VALUE_ZERO;
         if (depth <= 0) return quiesce(pos, alpha, beta, ply);
@@ -246,7 +248,7 @@ namespace Search
             int R = 3 + depth / 4;
             StateInfo st;
             pos.do_null_move(st);
-            Value nullValue = -search(pos, -beta, -beta + 1, depth - R - 1, ply + 1, !cutNode);
+            Value nullValue = -search(pos, -beta, -beta + 1, depth - R - 1, ply + 1, !cutNode, MOVE_NONE, MOVE_NONE);
             pos.undo_null_move();
 
             if (nullValue >= beta)
@@ -346,7 +348,7 @@ namespace Search
 
             if (i == 0)
             {
-                value = -search(pos, -beta, -alpha, newDepth, ply + 1, false, move);
+                value = -search(pos, -beta, -alpha, newDepth, ply + 1, false, move, MOVE_NONE);
             }
             else
             {
@@ -367,13 +369,13 @@ namespace Search
                     reduction = reduction < maxReduction ? reduction : maxReduction;
                 }
 
-                value = -search(pos, -alpha - 1, -alpha, newDepth - reduction, ply + 1, true, move);
+                value = -search(pos, -alpha - 1, -alpha, newDepth - reduction, ply + 1, true, move, MOVE_NONE);
 
                 if (value > alpha && reduction > 0)
-                    value = -search(pos, -alpha - 1, -alpha, newDepth, ply + 1, true, move);
+                    value = -search(pos, -alpha - 1, -alpha, newDepth, ply + 1, true, move, MOVE_NONE);
 
                 if (value > alpha && value < beta && isPv)
-                    value = -search(pos, -beta, -alpha, newDepth, ply + 1, false, move);
+                    value = -search(pos, -beta, -alpha, newDepth, ply + 1, false, move, MOVE_NONE);
             }
 
             pos.undo_move(move);
@@ -429,7 +431,7 @@ namespace Search
 
         while (true)
         {
-            Value score = search(pos, alpha, beta, depth, 0, false);
+            Value score = search(pos, alpha, beta, depth, 0, false, MOVE_NONE, MOVE_NONE);
 
             if (score <= alpha)
             {
@@ -478,7 +480,7 @@ namespace Search
             if (timeUp()) break;
 
             if (depth == 1)
-                bestValue = search(pos, -VALUE_INFINITE, VALUE_INFINITE, depth, 0, false);
+                bestValue = search(pos, -VALUE_INFINITE, VALUE_INFINITE, depth, 0, false, MOVE_NONE, MOVE_NONE);
             else
                 bestValue = aspirationSearch(pos, bestValue, depth);
 
