@@ -8,6 +8,8 @@ class Position;
 namespace Eval
 {
     extern const Value PieceValues[PIECE_TYPE_NB];
+    extern const Value PieceValuesMG[PIECE_TYPE_NB];
+    extern const Value PieceValuesEG[PIECE_TYPE_NB];
 
     Value evaluate(const Position& pos);
     void init();

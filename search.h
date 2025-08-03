@@ -4,11 +4,21 @@
 #include "types.h"
 #include "move.h"
 #include <vector>
+#include <chrono>
 
 class Position;
 
 namespace Search
 {
+    struct SearchInfo
+    {
+        std::chrono::steady_clock::time_point startTime;
+        int timeLimit = 0;
+        bool stopped = false;
+        uint64_t nodeCount = 0;
+        uint64_t maxNodes = 20000000;
+    };
+
     struct Limits
     {
         Limits()

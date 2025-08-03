@@ -125,10 +125,14 @@
   <ItemGroup>
     <ClCompile Include="bitboard.cpp" />
     <ClCompile Include="board.cpp" />
+    <ClCompile Include="board_moves.cpp" />
+    <ClCompile Include="board_utils.cpp" />
     <ClCompile Include="eval.cpp" />
+    <ClCompile Include="eval_features.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="move.cpp" />
     <ClCompile Include="search.cpp" />
+    <ClCompile Include="search_utils.cpp" />
     <ClCompile Include="tt.cpp" />
     <ClCompile Include="uci.cpp" />
   </ItemGroup>
@@ -136,8 +140,10 @@
     <ClInclude Include="bitboard.h" />
     <ClInclude Include="board.h" />
     <ClInclude Include="eval.h" />
+    <ClInclude Include="eval_features.h" />
     <ClInclude Include="move.h" />
     <ClInclude Include="search.h" />
+    <ClInclude Include="search_utils.h" />
     <ClInclude Include="tt.h" />
     <ClInclude Include="types.h" />
     <ClInclude Include="uci.h" />

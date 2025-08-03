@@ -41,9 +41,10 @@ namespace UCI
     {
         Position pos;
         string token, cmd;
-        StateInfo si;
+        StateInfo setupStates[1000];
+        int stateIndex = 0;
 
-        pos.set("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", false, &si, nullptr);
+        pos.set("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", false, &setupStates[0], nullptr);
 
         for (int i = 1; i < argc; ++i)
             cmd += string(argv[i]) + " ";
@@ -73,13 +74,14 @@ namespace UCI
 
             else if (token == "ucinewgame")
             {
-                StateInfo newSi;
-                pos.set("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", false, &newSi, nullptr);
+                stateIndex = 0;
+                pos.set("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", false, &setupStates[0], nullptr);
             }
 
             else if (token == "position")
             {
                 string fen;
+                stateIndex = 0;
 
                 is >> token;
 
@@ -94,8 +96,7 @@ namespace UCI
                         fen += token + " ";
                 }
 
-                StateInfo newSi;
-                pos.set(fen, false, &newSi, nullptr);
+                pos.set(fen, false, &setupStates[stateIndex++], nullptr);
 
                 if (token == "moves")
                 {
@@ -114,8 +115,7 @@ namespace UCI
                             break;
                         }
 
-                        StateInfo moveSi;
-                        pos.do_move(m, moveSi);
+                        pos.do_move(m, setupStates[stateIndex++]);
                     }
                 }
             }
@@ -197,7 +197,7 @@ namespace UCI
             {
                 Value eval = Eval::evaluate(pos);
                 cout << "Static evaluation: " << eval << " (cp)" << endl;
-                cout << "From " << (pos.side_to_move() == WHITE ? "WHITE" : "BLACK") << " perspective" << endl;
+                cout << "From WHITE perspective (positive = good for White)" << endl;
             }
 
             else if (token == "analyze")
