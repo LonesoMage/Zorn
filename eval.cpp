@@ -187,73 +187,23 @@ namespace Eval
         default:     return 0;
         }
 
-        return table[relativeSquare];
+        Value value = table[relativeSquare];
+        return c == WHITE ? value : -value;
     }
 
     static Value evaluateCenter(const Position& pos)
     {
         Value value = 0;
 
-        if (pos.piece_on(SQ_E4) == W_PAWN) value += 80;
-        if (pos.piece_on(SQ_D4) == W_PAWN) value += 80;
-        if (pos.piece_on(SQ_E5) == B_PAWN) value -= 80;
-        if (pos.piece_on(SQ_D5) == B_PAWN) value -= 80;
+        if (pos.piece_on(SQ_E4) == W_PAWN) value += 50;
+        if (pos.piece_on(SQ_D4) == W_PAWN) value += 50;
+        if (pos.piece_on(SQ_E5) == B_PAWN) value -= 50;
+        if (pos.piece_on(SQ_D5) == B_PAWN) value -= 50;
 
-        if (pos.piece_on(SQ_E2) != W_PAWN) value += 40;
-        if (pos.piece_on(SQ_D2) != W_PAWN) value += 40;
-        if (pos.piece_on(SQ_E7) != B_PAWN) value -= 40;
-        if (pos.piece_on(SQ_D7) != B_PAWN) value -= 40;
-
-        return value;
-    }
-
-    static Value evaluateKnightPenalties(const Position& pos)
-    {
-        Value value = 0;
-
-        if (pos.piece_on(SQ_A3) == W_KNIGHT) value -= 200;
-        if (pos.piece_on(SQ_H3) == W_KNIGHT) value -= 200;
-        if (pos.piece_on(SQ_A6) == B_KNIGHT) value += 200;
-        if (pos.piece_on(SQ_H6) == B_KNIGHT) value += 200;
-
-        if (pos.piece_on(SQ_C3) == W_KNIGHT) value += 30;
-        if (pos.piece_on(SQ_F3) == W_KNIGHT) value += 30;
-        if (pos.piece_on(SQ_C6) == B_KNIGHT) value -= 30;
-        if (pos.piece_on(SQ_F6) == B_KNIGHT) value -= 30;
-
-        return value;
-    }
-
-    static Value evaluateKingSafety(const Position& pos)
-    {
-        Value value = 0;
-
-        Square whiteKing = pos.square<KING>(WHITE);
-        Square blackKing = pos.square<KING>(BLACK);
-
-        if (rank_of(whiteKing) == RANK_1)
-        {
-            File f = file_of(whiteKing);
-            int shield = 0;
-
-            if (f > FILE_A && pos.piece_on(make_square(File(f - 1), RANK_2)) == W_PAWN) shield++;
-            if (pos.piece_on(make_square(f, RANK_2)) == W_PAWN) shield++;
-            if (f < FILE_H && pos.piece_on(make_square(File(f + 1), RANK_2)) == W_PAWN) shield++;
-
-            value += shield * 10;
-        }
-
-        if (rank_of(blackKing) == RANK_8)
-        {
-            File f = file_of(blackKing);
-            int shield = 0;
-
-            if (f > FILE_A && pos.piece_on(make_square(File(f - 1), RANK_7)) == B_PAWN) shield++;
-            if (pos.piece_on(make_square(f, RANK_7)) == B_PAWN) shield++;
-            if (f < FILE_H && pos.piece_on(make_square(File(f + 1), RANK_7)) == B_PAWN) shield++;
-
-            value -= shield * 10;
-        }
+        if (pos.piece_on(SQ_E2) != W_PAWN) value += 30;
+        if (pos.piece_on(SQ_D2) != W_PAWN) value += 30;
+        if (pos.piece_on(SQ_E7) != B_PAWN) value -= 30;
+        if (pos.piece_on(SQ_D7) != B_PAWN) value -= 30;
 
         return value;
     }
@@ -276,7 +226,7 @@ namespace Eval
                 attacks &= ~pos.pieces(c);
 
                 int mobility = popcount(attacks);
-                Value mobilityBonus = mobility * (pt == QUEEN ? 1 : pt == ROOK ? 2 : 3);
+                Value mobilityBonus = mobility * (pt == QUEEN ? 4 : pt == ROOK ? 3 : pt == BISHOP ? 2 : 1);
 
                 if (c == WHITE)
                     value += mobilityBonus;
@@ -322,11 +272,8 @@ namespace Eval
         }
 
         mgScore += evaluateCenter(pos);
-        mgScore += evaluateKnightPenalties(pos);
-        mgScore += evaluateKingSafety(pos);
         mgScore += evaluateMobility(pos);
 
-        egScore += evaluateKingSafety(pos);
         egScore += evaluateMobility(pos);
 
         mgScore += (pos.side_to_move() == WHITE) ? 10 : -10;
