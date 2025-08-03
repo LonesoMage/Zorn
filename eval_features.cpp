@@ -1,4 +1,5 @@
 #include "eval_features.h"
+#include "eval.h"
 #include "board.h"
 #include "bitboard.h"
 
@@ -267,6 +268,45 @@ namespace Eval
                     value += mobilityBonus;
                 else
                     value -= mobilityBonus;
+            }
+        }
+
+        return value;
+    }
+
+    Value evaluateThreats(const Position& pos)
+    {
+        Value value = 0;
+
+        for (Square s = SQ_A1; s <= SQ_H8; s = Square(s + 1))
+        {
+            Piece pc = pos.piece_on(s);
+            if (pc == NO_PIECE) continue;
+
+            Color c = color_of(pc);
+            Color enemy = ~c;
+            PieceType pt = type_of(pc);
+
+            Bitboard attackers = pos.attackers_to(s) & pos.pieces(enemy);
+            Bitboard defenders = pos.attackers_to(s) & pos.pieces(c);
+
+            if (attackers && !defenders)
+            {
+                Value penalty = 0;
+                switch (pt)
+                {
+                case PAWN:   penalty = 15; break;
+                case KNIGHT: penalty = 60; break;
+                case BISHOP: penalty = 60; break;
+                case ROOK:   penalty = 80; break;
+                case QUEEN:  penalty = 120; break;
+                default: break;
+                }
+
+                if (c == WHITE)
+                    value -= penalty;
+                else
+                    value += penalty;
             }
         }
 

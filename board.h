@@ -130,6 +130,8 @@ public:
     void do_castling(Color us, Square from, Square& to, Square& rfrom, Square& rto);
 
     Bitboard slider_attacks(Bitboard occupied) const;
+    Bitboard attackers_to(Square s) const;
+    Bitboard attackers_to(Square s, Bitboard occupied) const;
 
 private:
     void set_castling_right(Color c, Square rfrom);
@@ -137,8 +139,6 @@ private:
     void set_check_info(StateInfo* si) const;
 
     Bitboard slider_blockers(Bitboard sliders, Square s, Bitboard& pinners) const;
-    Bitboard attackers_to(Square s) const;
-    Bitboard attackers_to(Square s, Bitboard occupied) const;
 
     template<PieceType Pt>
     Bitboard attacks_from(Square s) const;

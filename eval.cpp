@@ -62,9 +62,11 @@ namespace Eval
         mgScore += evaluateKnightPenalties(pos);
         mgScore += evaluateKingSafety(pos);
         mgScore += evaluateMobility(pos);
+        mgScore += evaluateThreats(pos);
 
         egScore += evaluateKingSafety(pos);
         egScore += evaluateMobility(pos);
+        egScore += evaluateThreats(pos);
 
         mgScore += (pos.side_to_move() == WHITE) ? 10 : -10;
         egScore += (pos.side_to_move() == WHITE) ? 10 : -10;

@@ -12,6 +12,7 @@ namespace Eval
     Value evaluateKnightPenalties(const Position& pos);
     Value evaluateKingSafety(const Position& pos);
     Value evaluateMobility(const Position& pos);
+    Value evaluateThreats(const Position& pos);
 }
 
 #endif

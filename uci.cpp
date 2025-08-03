@@ -41,7 +41,7 @@ namespace UCI
     {
         Position pos;
         string token, cmd;
-        StateInfo setupStates[1000];
+        static StateInfo setupStates[1000];
         int stateIndex = 0;
 
         pos.set("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", false, &setupStates[0], nullptr);
@@ -363,6 +363,9 @@ namespace UCI
     {
         if (str.length() == 5)
             str[4] = char(tolower(str[4]));
+
+        if (str.length() < 4)
+            return MOVE_NONE;
 
         for (const auto& m : MoveList(pos))
             if (str == move_to_uci(m) && pos.legal(m))

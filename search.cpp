@@ -266,9 +266,9 @@ namespace Search
         Value bestValue = -VALUE_INFINITE;
         Move bestMove = MOVE_NONE;
 
-        int maxDepth = limits.depth > 0 ? std::min(limits.depth, 20) : 12;
+        int maxDepth = limits.depth > 0 ? std::min(limits.depth, 20) : 15;
 
-        for (Depth depth = 1; depth <= maxDepth; ++depth)
+        for (Depth depth = 2; depth <= maxDepth; ++depth)
         {
             if (timeUp()) break;
 
